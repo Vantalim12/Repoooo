@@ -16,12 +16,16 @@ async function getAllItems(redisClient, pattern) {
 
   if (!keys.length) return [];
 
-  const pipeline = redisClient.multi();
-  keys.forEach((key) => {
-    pipeline.hGetAll(key);
-  });
+  const results = [];
 
-  const results = await pipeline.exec();
+  // Process each key individually to ensure we get proper data
+  for (const key of keys) {
+    const item = await redisClient.hGetAll(key);
+    if (Object.keys(item).length > 0) {
+      results.push(item);
+    }
+  }
+
   return results;
 }
 

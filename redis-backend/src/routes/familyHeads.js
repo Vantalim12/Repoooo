@@ -3,6 +3,7 @@ const router = express.Router();
 const { body, validationResult } = require("express-validator");
 const { authenticateToken } = require("../middleware/auth");
 const { generateId, getAllItems, getItemById } = require("../utils/redisUtils");
+const util = require("util");
 
 // Apply authentication middleware to all routes
 router.use(authenticateToken);
@@ -92,7 +93,92 @@ router.post(
       // Generate new family head ID
       const id = await generateId(req.redisClient, "familyHeads:count", "F");
 
-      // Prepare family head data
+      // Current registration date
+      const registrationDate = new Date().toISOString();
+
+      // Then in your POST route, right before the hSet command:
+      console.log("About to execute Redis hSet with key:", `familyHead:${id}`);
+      console.log(
+        "Command data:",
+        util.inspect(
+          [
+            "id",
+            id,
+            "firstName",
+            req.body.firstName,
+            "lastName",
+            req.body.lastName,
+            "gender",
+            req.body.gender,
+            "birthDate",
+            req.body.birthDate,
+            "address",
+            req.body.address,
+            "contactNumber",
+            req.body.contactNumber,
+            "registrationDate",
+            registrationDate,
+            "type",
+            "Family Head",
+          ],
+          { depth: null }
+        )
+      );
+
+      try {
+        await req.redisClient.hSet(
+          `familyHead:${id}`,
+          "id",
+          id,
+          "firstName",
+          req.body.firstName,
+          "lastName",
+          req.body.lastName,
+          "gender",
+          req.body.gender,
+          "birthDate",
+          req.body.birthDate,
+          "address",
+          req.body.address,
+          "contactNumber",
+          req.body.contactNumber,
+          "registrationDate",
+          registrationDate,
+          "type",
+          "Family Head"
+        );
+        console.log("Redis hSet command executed successfully");
+      } catch (error) {
+        console.error("Redis hSet error details:", error);
+        throw error;
+      }
+      await req.redisClient.hSet(
+        `familyHead:${id}`,
+        "id",
+        id,
+        "firstName",
+        req.body.firstName,
+        "lastName",
+        req.body.lastName,
+        "gender",
+        req.body.gender,
+        "birthDate",
+        req.body.birthDate,
+        "address",
+        req.body.address,
+        "contactNumber",
+        req.body.contactNumber,
+        "registrationDate",
+        registrationDate,
+        "type",
+        "Family Head"
+      );
+
+      // Initialize empty set for family members
+      await req.redisClient.sAdd(`familyMembers:${id}`, "");
+      await req.redisClient.sRem(`familyMembers:${id}`, "");
+
+      // Prepare response data
       const familyHead = {
         id,
         firstName: req.body.firstName,
@@ -101,16 +187,9 @@ router.post(
         birthDate: req.body.birthDate,
         address: req.body.address,
         contactNumber: req.body.contactNumber,
-        registrationDate: new Date().toISOString(),
+        registrationDate: registrationDate,
         type: "Family Head",
       };
-
-      // Save family head to Redis
-      await req.redisClient.hSet(`familyHead:${id}`, { ...familyHead });
-
-      // Initialize empty set for family members
-      await req.redisClient.sAdd(`familyMembers:${id}`, "");
-      await req.redisClient.sRem(`familyMembers:${id}`, "");
 
       res.status(201).json(familyHead);
     } catch (error) {
@@ -155,7 +234,59 @@ router.put(
         `familyHead:${id}`
       );
 
-      // Prepare updated family head data
+      // Update family head in Redis - FIXED VERSION
+      await req.redisClient.hSet(`familyHead:${id}`, [
+        "id",
+        id,
+        "firstName",
+        req.body.firstName,
+        "lastName",
+        req.body.lastName,
+        "gender",
+        req.body.gender,
+        "birthDate",
+        req.body.birthDate,
+        "address",
+        req.body.address,
+        "contactNumber",
+        req.body.contactNumber,
+        "registrationDate",
+        currentFamilyHead.registrationDate,
+        "type",
+        "Family Head",
+      ]);
+
+      // Update address for all family members if address changed
+      if (req.body.address !== currentFamilyHead.address) {
+        const memberIds = await req.redisClient.sMembers(`familyMembers:${id}`);
+
+        for (const memberId of memberIds) {
+          // Instead of passing an array, pass each field-value pair as individual arguments
+          await req.redisClient.hSet(
+            `familyHead:${id}`,
+            "id",
+            id,
+            "firstName",
+            req.body.firstName,
+            "lastName",
+            req.body.lastName,
+            "gender",
+            req.body.gender,
+            "birthDate",
+            req.body.birthDate,
+            "address",
+            req.body.address,
+            "contactNumber",
+            req.body.contactNumber,
+            "registrationDate",
+            registrationDate,
+            "type",
+            "Family Head"
+          );
+        }
+      }
+
+      // Prepare response data
       const familyHead = {
         id,
         firstName: req.body.firstName,
@@ -167,22 +298,6 @@ router.put(
         registrationDate: currentFamilyHead.registrationDate,
         type: "Family Head",
       };
-
-      // Update family head in Redis
-      await req.redisClient.hSet(`familyHead:${id}`, familyHead);
-
-      // Update address for all family members if address changed
-      if (req.body.address !== currentFamilyHead.address) {
-        const memberIds = await req.redisClient.sMembers(`familyMembers:${id}`);
-
-        for (const memberId of memberIds) {
-          await req.redisClient.hSet(
-            `resident:${memberId}`,
-            "address",
-            req.body.address
-          );
-        }
-      }
 
       res.json(familyHead);
     } catch (error) {

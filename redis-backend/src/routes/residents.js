@@ -11,6 +11,7 @@ router.use(authenticateToken);
 router.get("/", async (req, res) => {
   try {
     const residents = await getAllItems(req.redisClient, "resident:*");
+    console.log("Retrieved residents:", residents);
     res.json(residents);
   } catch (error) {
     console.error("Error getting residents:", error);
@@ -68,7 +69,48 @@ router.post(
       // Generate new resident ID
       const id = await generateId(req.redisClient, "residents:count", "R");
 
-      // Prepare resident data
+      // Current registration date
+      const registrationDate = new Date().toISOString();
+
+      // Log before saving
+      console.log("About to execute Redis hSet with key:", `resident:${id}`);
+
+      // Save resident to Redis - FIXED VERSION with individual arguments (not array)
+      await req.redisClient.hSet(
+        `resident:${id}`,
+        "id",
+        id,
+        "firstName",
+        req.body.firstName,
+        "lastName",
+        req.body.lastName,
+        "gender",
+        req.body.gender,
+        "birthDate",
+        req.body.birthDate,
+        "address",
+        req.body.address,
+        "contactNumber",
+        req.body.contactNumber || "",
+        "familyHeadId",
+        req.body.familyHeadId || "",
+        "registrationDate",
+        registrationDate,
+        "type",
+        "Resident"
+      );
+      console.log("Redis hSet command executed successfully");
+
+      // If this resident is part of a family, update family members
+      if (req.body.familyHeadId) {
+        console.log(`Adding resident ${id} to family ${req.body.familyHeadId}`);
+        await req.redisClient.sAdd(
+          `familyMembers:${req.body.familyHeadId}`,
+          id
+        );
+      }
+
+      // Prepare response data
       const resident = {
         id,
         firstName: req.body.firstName,
@@ -78,20 +120,9 @@ router.post(
         address: req.body.address,
         contactNumber: req.body.contactNumber || "",
         familyHeadId: req.body.familyHeadId || "",
-        registrationDate: new Date().toISOString(),
+        registrationDate: registrationDate,
         type: "Resident",
       };
-
-      // Save resident to Redis
-      await req.redisClient.hSet(`resident:${id}`, { ...resident });
-
-      // If this resident is part of a family, update family members
-      if (req.body.familyHeadId) {
-        await req.redisClient.sAdd(
-          `familyMembers:${req.body.familyHeadId}`,
-          id
-        );
-      }
 
       res.status(201).json(resident);
     } catch (error) {
@@ -138,6 +169,9 @@ router.put(
         currentResident.familyHeadId !== req.body.familyHeadId
       ) {
         // Remove from old family
+        console.log(
+          `Removing resident ${id} from family ${currentResident.familyHeadId}`
+        );
         await req.redisClient.sRem(
           `familyMembers:${currentResident.familyHeadId}`,
           id
@@ -154,13 +188,39 @@ router.put(
         }
 
         // Add to new family
+        console.log(`Adding resident ${id} to family ${req.body.familyHeadId}`);
         await req.redisClient.sAdd(
           `familyMembers:${req.body.familyHeadId}`,
           id
         );
       }
 
-      // Prepare resident data
+      // Update resident in Redis - FIXED VERSION with individual arguments (not array)
+      await req.redisClient.hSet(
+        `resident:${id}`,
+        "id",
+        id,
+        "firstName",
+        req.body.firstName,
+        "lastName",
+        req.body.lastName,
+        "gender",
+        req.body.gender,
+        "birthDate",
+        req.body.birthDate,
+        "address",
+        req.body.address,
+        "contactNumber",
+        req.body.contactNumber || "",
+        "familyHeadId",
+        req.body.familyHeadId || "",
+        "registrationDate",
+        currentResident.registrationDate,
+        "type",
+        "Resident"
+      );
+
+      // Prepare response data
       const resident = {
         id,
         firstName: req.body.firstName,
@@ -173,9 +233,6 @@ router.put(
         registrationDate: currentResident.registrationDate,
         type: "Resident",
       };
-
-      // Update resident in Redis
-      await req.redisClient.hSet(`resident:${id}`, resident);
 
       res.json(resident);
     } catch (error) {
@@ -201,6 +258,9 @@ router.delete("/:id", async (req, res) => {
 
     // If resident is part of a family, remove from family members
     if (resident.familyHeadId) {
+      console.log(
+        `Removing resident ${id} from family ${resident.familyHeadId}`
+      );
       await req.redisClient.sRem(`familyMembers:${resident.familyHeadId}`, id);
     }
 
